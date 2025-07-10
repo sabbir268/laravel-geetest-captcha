@@ -73,6 +73,9 @@ class GeetestCaptchaServiceProvider extends ServiceProvider
     if (typeof initGeetest4 !== "undefined" && captchaId) {
         initGeetest4({
             captchaId: captchaId,
+            nativeButton: {
+                "width": "100%"
+            }
         }, function (geetest) {
             window.geetest = geetest;
             geetest
