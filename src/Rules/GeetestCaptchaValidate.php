@@ -2,17 +2,30 @@
 
 namespace Salahhusa9\GeetestCaptcha\Rules;
 
-use Closure;
-use Illuminate\Contracts\Validation\ValidationRule;
+use Illuminate\Contracts\Validation\Rule;
 use Salahhusa9\GeetestCaptcha\Facades\GeetestCaptcha;
 
-class GeetestCaptchaValidate implements ValidationRule
+class GeetestCaptchaValidate implements Rule
 {
     /**
-     * Run the validation rule.
+     * Determine if the validation rule passes.
+     *
+     * @param  string  $attribute
+     * @param  mixed  $value
+     * @return bool
      */
-    public function validate(string $attribute, mixed $value, Closure $fail): void
+    public function passes($attribute, $value)
     {
-        GeetestCaptcha::validate($value) ? true : $fail('validation.geetest_captcha_fail')->translate();
+        return GeetestCaptcha::validate($value);
+    }
+
+    /**
+     * Get the validation error message.
+     *
+     * @return string
+     */
+    public function message()
+    {
+        return trans('validation.geetest_captcha_fail') ?: 'The GeeTest captcha verification failed.';
     }
 }

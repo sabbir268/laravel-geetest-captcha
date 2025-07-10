@@ -2,100 +2,164 @@
 
 namespace Salahhusa9\GeetestCaptcha;
 
+use GuzzleHttp\Client;
+use GuzzleHttp\Exception\RequestException;
+use Illuminate\Support\Facades\Log;
+
 class GeetestCaptcha
 {
     private $captcha_id;
-
     private $captcha_key;
-
     private $api_server;
-
     private $validatedData;
+    private $timeout;
+    private $httpClient;
 
     public function __construct()
     {
-        $this->captcha_id = env('GEETEST_ID');
-        $this->captcha_key = env('GEETEST_KEY');
-        $this->api_server = 'http://gcaptcha4.geetest.com';
+        $this->captcha_id = config('geetest-captcha.captcha_id', env('GEETEST_ID'));
+        $this->captcha_key = config('geetest-captcha.captcha_key', env('GEETEST_KEY'));
+        $this->api_server = config('geetest-captcha.api_server', 'http://gcaptcha4.geetest.com');
+        $this->timeout = config('geetest-captcha.timeout', 5);
+        $this->httpClient = new Client(['timeout' => $this->timeout]);
     }
 
+    /**
+     * Validate the captcha response
+     *
+     * @param string|null $value
+     * @return bool
+     */
     public function validate($value)
     {
-        $captcha_id = $this->captcha_id;
-        $captcha_key = $this->captcha_key;
-        $api_server = $this->api_server;
-
-        if (empty($value)) {
+        if (empty($value) || empty($this->captcha_id) || empty($this->captcha_key)) {
             return false;
         }
 
-        $value = json_decode($value, true);
-        // 2.get the verification parameters passed from the front end after verification
-        $lot_number = $value['lot_number'];
-        $captcha_output = $value['captcha_output'];
-        $pass_token = $value['pass_token'];
-        $gen_time = $value['gen_time'];
+        try {
+            $decodedValue = json_decode($value, true);
 
-        // 3.generate signature
-        // use standard hmac algorithms to generate signatures, and take the user's current verification serial number lot_number as the original message, and the client's verification private key as the key
-        // use sha256 hash algorithm to hash message and key in one direction to generate the final signature
-        $sign_token = hash_hmac('sha256', $lot_number, $captcha_key);
+            if (!is_array($decodedValue) || !$this->hasRequiredFields($decodedValue)) {
+                return false;
+            }
 
-        // 4.upload verification parameters to the secondary verification interface of GeeTest to validate the user verification status
-        // geetest recommends to put captcha_id parameter after url, so that when a request exception occurs, it can be quickly located in the log according to the id
-        $query = [
-            'lot_number' => $lot_number,
-            'captcha_output' => $captcha_output,
-            'pass_token' => $pass_token,
-            'gen_time' => $gen_time,
-            'sign_token' => $sign_token,
-        ];
-        $url = sprintf($api_server.'/validate'.'?captcha_id=%s', $captcha_id);
-        $res = $this->post_request($url, $query);
-        $obj = json_decode($res, true);
-        $this->validatedData = $obj;
+            // Extract verification parameters
+            $lot_number = $decodedValue['lot_number'];
+            $captcha_output = $decodedValue['captcha_output'];
+            $pass_token = $decodedValue['pass_token'];
+            $gen_time = $decodedValue['gen_time'];
 
-        if (empty($obj) or ! isset($obj['result'])) {
+            // Generate signature
+            $sign_token = hash_hmac('sha256', $lot_number, $this->captcha_key);
+
+            // Prepare query parameters
+            $query = [
+                'lot_number' => $lot_number,
+                'captcha_output' => $captcha_output,
+                'pass_token' => $pass_token,
+                'gen_time' => $gen_time,
+                'sign_token' => $sign_token,
+            ];
+
+            // Make API request
+            $url = sprintf('%s/validate?captcha_id=%s', $this->api_server, $this->captcha_id);
+            $response = $this->makeApiRequest($url, $query);
+
+            if (!$response) {
+                return false;
+            }
+
+            $responseData = json_decode($response, true);
+            $this->validatedData = $responseData;
+
+            return isset($responseData['result']) && $responseData['result'] === 'success';
+
+        } catch (\Exception $e) {
+            Log::error('GeeTest Captcha validation error: ' . $e->getMessage());
             return false;
         }
+    }
 
-        if ($obj['result'] != 'success') {
-            return false;
+    /**
+     * Check if the decoded value has all required fields
+     *
+     * @param array $decodedValue
+     * @return bool
+     */
+    private function hasRequiredFields($decodedValue)
+    {
+        $requiredFields = ['lot_number', 'captcha_output', 'pass_token', 'gen_time'];
+
+        foreach ($requiredFields as $field) {
+            if (!isset($decodedValue[$field])) {
+                return false;
+            }
         }
 
         return true;
     }
 
-    private function post_request($url, $postdata)
+    /**
+     * Make API request to GeeTest
+     *
+     * @param string $url
+     * @param array $postData
+     * @return string|false
+     */
+    private function makeApiRequest($url, $postData)
     {
-        $data = http_build_query($postdata);
+        try {
+            $response = $this->httpClient->post($url, [
+                'form_params' => $postData,
+                'headers' => [
+                    'Content-Type' => 'application/x-www-form-urlencoded',
+                ],
+            ]);
 
-        $options = [
-            'http' => [
-                'method' => 'POST',
-                'header' => 'Content-type: application/x-www-form-urlencoded',
-                'content' => $data,
-                'timeout' => 5,
-            ],
-        ];
-        $context = stream_context_create($options);
-        $result = file_get_contents($url, false, $context);
-        preg_match('/([0-9])\d+/', $http_response_header[0], $matches);
-        $responsecode = intval($matches[0]);
-        if ($responsecode != 200) {
-            $result = [
+            if ($response->getStatusCode() === 200) {
+                return $response->getBody()->getContents();
+            }
+
+            return false;
+
+        } catch (RequestException $e) {
+            Log::error('GeeTest API request failed: ' . $e->getMessage());
+
+            // Return a fallback response for API failures
+            return json_encode([
                 'result' => 'success',
                 'reason' => 'request geetest api fail',
-            ];
-
-            return $result;
-        } else {
-            return $result;
+            ]);
         }
     }
 
+    /**
+     * Get validated data
+     *
+     * @return array|null
+     */
     public function getValidatedData()
     {
         return $this->validatedData;
+    }
+
+    /**
+     * Set captcha configuration dynamically
+     *
+     * @param string $captcha_id
+     * @param string $captcha_key
+     * @param string|null $api_server
+     * @return $this
+     */
+    public function setConfig($captcha_id, $captcha_key, $api_server = null)
+    {
+        $this->captcha_id = $captcha_id;
+        $this->captcha_key = $captcha_key;
+
+        if ($api_server) {
+            $this->api_server = $api_server;
+        }
+
+        return $this;
     }
 }
