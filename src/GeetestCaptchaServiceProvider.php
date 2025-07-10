@@ -63,11 +63,12 @@ class GeetestCaptchaServiceProvider extends ServiceProvider
         // Blade directive for initializing GeeTest captcha
         Blade::directive('geetestCaptchaInit', function ($elementId) {
             $elementId = trim($elementId, '\'"');
+            $geetestId = config('geetest-captcha.captcha_id', env('GEETEST_ID'));
 
             $html = <<<HTML
 <?php echo '
 <script>
-    var captchaId = "<?php echo config("geetest-captcha.captcha_id", env("GEETEST_ID")); ?>";
+    var captchaId = "{$geetestId}";
 
     if (typeof initGeetest4 !== "undefined" && captchaId) {
         initGeetest4({
