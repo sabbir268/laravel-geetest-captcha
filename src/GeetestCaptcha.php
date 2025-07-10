@@ -37,6 +37,7 @@ class GeetestCaptcha
         }
 
         try {
+            $value = html_entity_decode($value, ENT_QUOTES, 'UTF-8');
             $decodedValue = json_decode($value, true);
 
             if (!is_array($decodedValue) || !$this->hasRequiredFields($decodedValue)) {
